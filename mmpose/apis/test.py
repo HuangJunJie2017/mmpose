@@ -30,7 +30,7 @@ def single_gpu_test(model, data_loader):
     for data in data_loader:
         with torch.no_grad():
             result = model(return_loss=False, **data)
-        results.append(result)
+        results.extend(result)
 
         # use the first key as main key to calculate the batch size
         batch_size = len(next(iter(data.values())))
@@ -67,7 +67,7 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
     for data in data_loader:
         with torch.no_grad():
             result = model(return_loss=False, **data)
-        results.append(result)
+        results.extend(result)
 
         if rank == 0:
             # use the first key as main key to calculate the batch size
