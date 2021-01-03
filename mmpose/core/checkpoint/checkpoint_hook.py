@@ -63,10 +63,8 @@ class MyCheckpointHook(CheckpointHook):
             runner.save_checkpoint(
                 self.out_dir, save_optimizer=self.save_optimizer, **self.args)
         else:
-            if self.by_epoch:
-                save_checkpoint(runner.model, os.path.join(self.out_dir, 'epoch_latest.pth'))
-            else:
-                save_checkpoint(runner.model, os.path.join(self.out_dir, 'iter_latest.pth'))
+            runner.save_checkpoint(
+                self.out_dir, save_optimizer=self.save_optimizer, with_indicator=self.with_indicator, **self.args)
 
         # remove other checkpoints
         if self.max_keep_ckpts > 0:
