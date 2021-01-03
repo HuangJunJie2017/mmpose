@@ -1,6 +1,7 @@
 import warnings
 
 import cv2
+import math
 import numpy as np
 
 from mmpose.core.post_processing import transform_preds
@@ -296,10 +297,16 @@ def post_dark_udp(coords, batch_heatmaps, kernel=3):
             cv2.GaussianBlur(heatmap, (kernel, kernel), 0, heatmap)
     np.clip(batch_heatmaps, 0.001, 50, batch_heatmaps)
     np.log(batch_heatmaps, batch_heatmaps)
+    # [N, K, H, W] -> [H, W, N, K] -> [H, W, N*K]
     batch_heatmaps = np.transpose(batch_heatmaps,
                                   (2, 3, 0, 1)).reshape(H, W, -1)
-    batch_heatmaps_pad = cv2.copyMakeBorder(
-        batch_heatmaps, 1, 1, 1, 1, borderType=cv2.BORDER_REFLECT)
+    # due to the limits of cv2.copyMakeBorder(input[H, W, C]) C <= 512
+    batch_heatmaps_splits = [batch_heatmaps[..., 512*i:512*(i+1)] \
+        for i in range(math.ceil(N*K/512))]
+
+    batch_heatmaps_splits_pad = [cv2.copyMakeBorder(
+        split, 1, 1, 1, 1, borderType=cv2.BORDER_REFLECT) for split in batch_heatmaps_splits]
+    batch_heatmaps_pad = np.concatenate(batch_heatmaps_splits_pad, axis=2)
     batch_heatmaps_pad = np.transpose(
         batch_heatmaps_pad.reshape(H + 2, W + 2, B, K),
         (2, 3, 0, 1)).flatten()
