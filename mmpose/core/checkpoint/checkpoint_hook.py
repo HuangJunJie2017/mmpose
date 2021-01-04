@@ -5,7 +5,7 @@ from mmcv.runner.checkpoint import save_checkpoint
 from mmcv.runner.hooks.checkpoint import CheckpointHook
 
 @HOOKS.register_module()
-class MyCheckpointHook(CheckpointHook):
+class CheckpointHookV2(CheckpointHook):
     """Save checkpoints periodically.
 
     Args:
@@ -63,6 +63,7 @@ class MyCheckpointHook(CheckpointHook):
             runner.save_checkpoint(
                 self.out_dir, save_optimizer=self.save_optimizer, **self.args)
         else:
+            # if not with_indicator, only the latest_epoch checkpoint will be saved
             runner.save_checkpoint(
                 self.out_dir, save_optimizer=self.save_optimizer, with_indicator=self.with_indicator, **self.args)
 

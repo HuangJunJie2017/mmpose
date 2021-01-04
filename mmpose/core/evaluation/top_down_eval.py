@@ -468,7 +468,7 @@ def keypoints_from_heatmaps(heatmaps,
         heatmaps = _gaussian_blur(heatmaps, kernel=kernel)
 
     N, K, H, W = heatmaps.shape
-    # print(heatmaps.shape) [N, 51, 64, 48]
+ 
     if use_udp:
         assert target_type in ['GaussianHeatMap', 'CombinedTarget']
         if target_type == 'GaussianHeatMap':
@@ -476,9 +476,7 @@ def keypoints_from_heatmaps(heatmaps,
             preds = post_dark_udp(preds, heatmaps, kernel=kernel)
         elif target_type == 'CombinedTarget':
             for person_heatmaps in heatmaps:
-                # print(person_heatmaps.shape) [51, 64, 48]
                 for i, heatmap in enumerate(person_heatmaps):
-                    # print(heatmap.shape) [64, 48]
                     kt = 2 * kernel + 1 if i % 3 == 0 else kernel
                     cv2.GaussianBlur(heatmap, (kt, kt), 0, heatmap)
             # valid radius is in direct proportion to the height of heatmap.
@@ -487,9 +485,7 @@ def keypoints_from_heatmaps(heatmaps,
             offset_y = heatmaps[:, 2::3, :].flatten() * valid_radius
             heatmaps = heatmaps[:, ::3, :]
             preds, maxvals = _get_max_preds(heatmaps)
-            # print(preds.shape, maxvals.shape)[N, 17, 2] [N, 17, 1]
             index = preds[..., 0] + preds[..., 1] * W
-            # print('index.shape:', index.shape) # [32, 17]
             index += W * H * np.arange(0, N * K / 3).reshape(N, -1)
             index = index.astype(np.int).reshape(N, K // 3, 1)
             preds += np.concatenate((offset_x[index], offset_y[index]), axis=2)

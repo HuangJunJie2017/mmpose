@@ -15,8 +15,8 @@ from mmpose.apis import train_model
 from mmpose.datasets import build_dataset
 from mmpose.models import build_posenet
 from mmpose.utils import collect_env, get_root_logger
-
-from mmpose.core.checkpoint import MyCheckpointHook
+# import the customed checkpointhook
+from mmpose.core.checkpoint import CheckpointHookV2
 
 
 def parse_args():

@@ -1,3 +1,3 @@
-from .checkpoint_hook import MyCheckpointHook
+from .checkpoint_hook import CheckpointHookV2
 
-__all__ = ['MyCheckpointHook']
+__all__ = ['CheckpointHookV2']

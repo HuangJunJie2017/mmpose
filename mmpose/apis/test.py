@@ -66,6 +66,7 @@ def multi_gpu_test(model, data_loader, tmpdir=None, gpu_collect=False):
         prog_bar = mmcv.ProgressBar(len(dataset))
     for data in data_loader:
         with torch.no_grad():
+            # in test mode, model will return a list of predictions
             result = model(return_loss=False, **data)
         results.extend(result)
 

@@ -263,10 +263,9 @@ class TopDown(BasePose):
 
         results = []
         for i in range(num_images):
+            image_path = []
             all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
             all_boxes = np.zeros((1, 6), dtype=np.float32)
-            image_path = []
-
             all_preds[0, :, 0:2] = preds[i, :, 0:2]
             all_preds[0, :, 2:3] = maxvals[i]
             all_boxes[0, 0:2] = c[i, 0:2]
