@@ -1,10 +1,10 @@
 log_level = 'INFO'
 load_from = None
-resume_from = None
+resume_from = 'work_dirs/hrnet_w32_coco_256x192_udp_samehp/epoch_latest.pth'
 dist_params = dict(backend='nccl')
 workflow = [('train', 1)]
-checkpoint_config = dict(interval=1, start_epoch=50, with_indicator=False)
-evaluation = dict(interval=10, metric='mAP', key_indicator='AP', start_epoch=140)
+checkpoint_config = dict(interval=1, start_epoch=100, with_indicator=False)
+evaluation = dict(interval=50, metric='mAP', key_indicator='AP', start_epoch=100)
 
 optimizer = dict(
     type='Adam',
@@ -18,14 +18,16 @@ lr_config = dict(
     warmup_iters=500,
     warmup_ratio=0.001,
     step=[170, 200])
-total_epochs = 210
+total_epochs = 300
 log_config = dict(
-    interval=50,
+    interval=100,
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(type='TensorboardLoggerHook')
     ])
 
+target_type = 'CombinedTarget'
+# target_type = 'GaussianHeatMap'
 channel_cfg = dict(
     num_output_channels=17,
     dataset_joints=17,
@@ -73,17 +75,20 @@ model = dict(
     keypoint_head=dict(
         type='TopDownSimpleHead',
         in_channels=32,
-        out_channels=channel_cfg['num_output_channels'],
+        out_channels=3 * channel_cfg['num_output_channels'],
         num_deconv_layers=0,
         extra=dict(final_conv_kernel=1, ),
     ),
     train_cfg=dict(),
     test_cfg=dict(
         flip_test=True,
-        post_process='default',
-        shift_heatmap=True,
-        modulate_kernel=11),
-    loss_pose=dict(type='JointsMSELoss', use_target_weight=True))
+        post_process=True,
+        shift_heatmap=False,
+        unbiased_decoding=False,
+        target_type=target_type,
+        modulate_kernel=7,
+        use_udp=True),
+    loss_pose=dict(type='CombinedTargetMSELoss', use_target_weight=True))
 
 data_cfg = dict(
     image_size=[192, 256],
@@ -111,14 +116,16 @@ train_pipeline = [
         num_joints_half_body=8,
         prob_half_body=0.3),
     dict(
-        type='TopDownGetRandomScaleRotation', rot_factor=40, scale_factor=0.5),
-    dict(type='TopDownAffine'),
+        type='TopDownGetRandomScaleRotation', rot_factor=45,
+        scale_factor=0.35),
+    dict(type='TopDownAffine', use_udp=True),
     dict(type='ToTensor'),
     dict(
         type='NormalizeTensor',
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225]),
-    dict(type='TopDownGenerateTarget', sigma=2),
+    dict(
+        type='TopDownGenerateTarget', encoding='UDP', target_type=target_type),
     dict(
         type='Collect',
         keys=['img', 'target', 'target_weight'],
@@ -130,7 +137,7 @@ train_pipeline = [
 
 val_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='TopDownAffine'),
+    dict(type='TopDownAffine', use_udp=True),
     dict(type='ToTensor'),
     dict(
         type='NormalizeTensor',
