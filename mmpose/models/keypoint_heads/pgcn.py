@@ -10,7 +10,8 @@ class _GraphConv(nn.Module):
     def __init__(self, adj, input_dim=16, output_dim=16, num_joints=17, p_dropout=None):
         super(_GraphConv, self).__init__()
 
-        self.gconv = PoseGraphConv(input_dim, output_dim, adj)
+        # self.gconv = PoseGraphConv(input_dim, output_dim, adj)
+        self.gconv = SimGraphConv(input_dim, output_dim, adj)
         self.bn = nn.BatchNorm2d(output_dim*num_joints)
         self.relu = nn.ReLU()
 
@@ -33,12 +34,102 @@ class _GraphConv(nn.Module):
         return x
 
 
-class PoseGraphConv(nn.Module):
+class SimGraphConv(nn.Module):
     """
     pose graph convolution layer
     """
 
     def __init__(self, in_features=16, out_features=16, adj=None, num_joints=17):
+        super(SimGraphConv, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.num_joints = num_joints
+        
+        # use group convolution to implement transformation matrix in paper
+        # self.W = nn.Parameter(torch.zeros(size=(in_features, out_features), dtype=torch.float))
+        self.W = nn.Conv2d(
+            in_channels=num_joints * in_features, 
+            out_channels=num_joints * out_features,
+            kernel_size=3, 
+            padding=1,
+            groups=num_joints
+            )
+
+        self.adj = adj.cuda()
+
+        self.conv_att = nn.Sequential(
+            nn.Conv2d(
+                in_channels=out_features*2, 
+                out_channels=1, 
+                kernel_size=1
+            ),
+            nn.ReLU(inplace=True)
+        )
+
+        self.att = False
+
+    def forward(self, input):
+        '''
+        backbone: [N, J, H, W] ->conv1d-> [N, J*C, H, W]
+        input: [N, J*C, H, W]
+        return: [N, J*C, H, W]
+        '''
+        adj = F.softmax(self.adj, dim=1)
+
+        J, C = self.num_joints, self.in_features
+        # print(J, C)
+        N, JC, H, W = input.shape
+        assert JC == J*C
+        # [N, JC, H, W]
+        B = self.W(input)
+
+        # L-PGCN spatial attention
+        if self.att:
+            B_list = torch.split(B, C, dim=1)
+            S = []
+            for i in range(J):
+                # print(B_list[0].shape) [N, C, H, W]
+                # expand b_uv to [N, J, H, W, d] and concat, then apply conv to get spatial attention
+                # [N, C, H, W] -> [N, J, C, H, W] -> [N, J, 2C, H, W] -> [N*J, 1, H, W]
+                s_uv = self.conv_att(
+                    torch.cat(
+                        (B_list[i].unsqueeze(1).expand(N, J, C, H, W), B.reshape(N, J, C, H, W)), dim=2
+                        ).reshape(N*J, 2*C, H, W)
+                        )
+                s_uv = s_uv.reshape(N, J, 1, H, W)
+                # s_uv [N, J, 1, H, W]
+                S.append(s_uv)
+
+            # Z_u
+            Z = []
+            for i in range(J):
+                # [N, J, C, H, W] * [N, J, 1, H, W]
+                b_uv = B.reshape(N, J, C, H, W) * S[i]
+                # sum
+                # [1, J] [N, J, C, H, W] -> [N, 1, J] [N, J, C*H*W] -> [N, 1, C, H, W]
+                z_u = torch.bmm(adj[i].expand(N, 1, J), b_uv.reshape(N, J, C*H*W))
+                Z.append(z_u.reshape(N, C, H, W))
+        
+            return torch.cat(Z, dim=1)
+
+        else:
+            # adj: [J, J] X [N, JC, H, W]
+            Z = torch.bmm(adj.expand(N, J, J), B.reshape(N, J, C*H*W))
+
+            return Z.reshape(N, J*C, H, W)
+
+
+
+
+    def __repr__(self):
+        return self.__class__.__name__ + ' (' + str(self.in_features) + ' -> ' + str(self.out_features) + ')'
+
+class PoseGraphConv(nn.Module):
+    """
+    pose graph convolution layer
+    """
+
+    def __init__(self, in_features=1, out_features=1, adj=None, num_joints=17):
         super(PoseGraphConv, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -46,14 +137,14 @@ class PoseGraphConv(nn.Module):
         
         # use group convolution to implement transformation matrix in paper
         self.W = nn.Conv2d(
-            in_channels=num_joints * out_features, 
+            in_channels=num_joints * in_features, 
             out_channels=num_joints * out_features,
             kernel_size=3, 
             padding=1,
             groups=num_joints
             )
 
-        self.adj = adj
+        self.adj = adj.cuda()
 
         self.conv_att = nn.Sequential(
             nn.Conv2d(
@@ -72,7 +163,8 @@ class PoseGraphConv(nn.Module):
         '''
         adj = F.softmax(self.adj, dim=1)
 
-        J, C = self.num_joints, self.out_features
+        J, C = self.num_joints, self.in_features
+        # print(J, C)
         N, JC, H, W = input.shape
         assert JC == J*C
         # [N, JC, H, W]
@@ -128,6 +220,7 @@ class PGCN(nn.Module):
         )
 
     def forward(self, x):
+        # print(x.shape)
         x = self.L_pgcn1(x)
         x = self.L_pgcn2(x)
         x = self.final_layer(x)
@@ -151,7 +244,7 @@ class PGCN(nn.Module):
                 adj_mx = sparse_mx_to_torch_sparse_tensor(adj_mx)
             else:
                 adj_mx = torch.tensor(adj_mx.todense(), dtype=torch.float)
-            print(adj_mx)
+            # print(adj_mx)
             return adj_mx
 
         def sparse_mx_to_torch_sparse_tensor(sparse_mx):
