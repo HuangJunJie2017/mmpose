@@ -4,15 +4,13 @@ from mmcv.cnn import (build_conv_layer, build_upsample_layer, constant_init,
 
 from ..registry import HEADS
 from .pgcn import PGCN
+from .top_down_simple_head import TopDownSimpleHead
 
 
 @HEADS.register_module()
-class TopDownPGCNHead(nn.Module):
-    """Top-down model head of simple baseline paper ref: Bin Xiao. ``Simple
-    Baselines for Human Pose Estimation and Tracking``.
-
-    TopDownSimpleHead is consisted of (>=0) number of deconv layers
-    and a simple conv2d layer.
+class TopDownUnetHead(nn.Module):
+    """Top-down model head of a U-structure baseline net proposed in ``Structure-aware human pose 
+    estimation with graph convolutional networks``.
 
     Args:
         in_channels (int): Number of input channels
@@ -30,7 +28,7 @@ class TopDownPGCNHead(nn.Module):
                  out_channels,
                  num_deconv_layers=3,
                  num_deconv_filters=(256, 256, 256),
-                 num_deconv_kernels=(4, 4, 4),
+                 num_deconv_kernels=(1, 1, 1),
                  extra=None):
         super().__init__()
 
@@ -99,13 +97,10 @@ class TopDownPGCNHead(nn.Module):
                 cfg=dict(type='Conv2d'),
                 in_channels=num_deconv_filters[-1]
                 if num_deconv_layers > 0 else in_channels,
-                # modify for pgcn, 16 is temporary
                 out_channels=out_channels*16,
                 kernel_size=kernel_size,
                 stride=1,
                 padding=padding)
-
-        self.pgcn = PGCN()
 
     def forward(self, x):
         """Forward function."""
@@ -124,7 +119,6 @@ class TopDownPGCNHead(nn.Module):
         up3 = up3 + lateral_ds1
 
         x = self.final_layer(up3)
-        x = self.pgcn(x)
         return x
 
     def _make_deconv_layer(self, num_layers, num_filters, num_kernels):
@@ -141,10 +135,9 @@ class TopDownPGCNHead(nn.Module):
         layers = []
         for i in range(num_layers):
             layer = []
-            kernel, padding, output_padding = \
-                self._get_deconv_cfg(num_kernels[i])
 
             planes = num_filters[i]
+            kernels = num_kernels[i]
             layer.append(
                 nn.UpsamplingBilinear2d(scale_factor=2)
             )
@@ -152,7 +145,7 @@ class TopDownPGCNHead(nn.Module):
                 nn.Conv2d(
                     in_channels=self.in_channels, 
                     out_channels=planes,
-                    kernel_size=1,
+                    kernel_size=kernels,
                     bias=False
                 )
             )
@@ -191,3 +184,109 @@ class TopDownPGCNHead(nn.Module):
         for m in self.final_layer.modules():
             if isinstance(m, nn.Conv2d):
                 normal_init(m, std=0.001, bias=0)
+
+
+@HEADS.register_module()
+class TopDownPGCNHead(TopDownUnetHead):
+    """Top-down model head of PGCN proposed in ``Structure-aware human pose 
+    estimation with graph convolutional networks``.
+
+    TopDownSimpleHead is a U-structure baseline net followed by 
+    the proposed pgcn.
+
+    Args:
+        in_channels (int): Number of input channels
+        out_channels (int): Number of output channels
+        num_deconv_layers (int): Number of deconv layers.
+            num_deconv_layers should >= 0. Note that 0 means
+            no deconv layers.
+        num_deconv_filters (list|tuple): Number of filters.
+            If num_deconv_layers > 0, the length of
+        num_deconv_kernels (list|tuple): Kernel sizes.
+        extra (dict): configs of pgcn
+    """
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 num_deconv_layers=3,
+                 num_deconv_filters=(256, 256, 256),
+                 num_deconv_kernels=(1, 1, 1),
+                 extra=None):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            num_deconv_layers=num_deconv_layers
+        )
+
+        self.pgcn = PGCN(
+            in_channels=extra['in_channels'],
+            out_channels=extra['out_channels'],
+            type=extra['att_type'])
+
+    def forward(self, x):
+        """Forward function."""
+        assert len(x) == 4
+        lateral_ds1 = self.lateral_ds1(x[0])
+        lateral_ds2 = self.lateral_ds2(x[1])
+        lateral_ds3 = self.lateral_ds3(x[2])
+
+        up1 = self.deconv_layers1(x[3])
+        up1 = up1 + lateral_ds3
+
+        up2 = self.deconv_layers2(up1)
+        up2 = up2 + lateral_ds2
+
+        up3 = self.deconv_layers3(up2)
+        up3 = up3 + lateral_ds1
+
+        x = self.final_layer(up3)
+        x = self.pgcn(x)
+
+        return x
+
+@HEADS.register_module()
+class TopDownSimPGCNHead(TopDownSimpleHead):
+    """TopDownSimPGCNHead is a variant of simple baseline, whose last 
+    conv2d layer followed by a proposed PGCN in ``Structure-aware human 
+    pose estimation with graph convolutional networks``.
+
+    Args:
+        in_channels (int): Number of input channels
+        out_channels (int): Number of output channels
+        num_deconv_layers (int): Number of deconv layers.
+            num_deconv_layers should >= 0. Note that 0 means
+            no deconv layers.
+        num_deconv_filters (list|tuple): Number of filters.
+            If num_deconv_layers > 0, the length of
+        num_deconv_kernels (list|tuple): Kernel sizes.
+    """
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 num_deconv_layers=3,
+                 num_deconv_filters=(256, 256, 256),
+                 num_deconv_kernels=(4, 4, 4),
+                 extra=None):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            num_deconv_layers=num_deconv_layers,
+            num_deconv_filters=num_deconv_filters,
+            num_deconv_kernels=num_deconv_kernels
+        )
+
+        self.pgcn = PGCN(
+            in_channels=extra['in_channels'],
+            out_channels=extra['out_channels'],
+            type=extra['att_type'])
+
+    def forward(self, x):
+        """Forward function."""
+        if isinstance(x, list):
+            x = x[0]
+        x = self.deconv_layers(x)
+        x = self.final_layer(x)
+        x = self.pgcn(x)
+        return x

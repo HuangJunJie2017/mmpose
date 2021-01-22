@@ -8,7 +8,7 @@ evaluation = dict(interval=210, metric='mAP', key_indicator='AP')
 
 optimizer = dict(
     type='Adam',
-    lr=1e-3,
+    lr=5e-4,
 )
 optimizer_config = dict(grad_clip=None)
 # learning policy
@@ -45,6 +45,11 @@ model = dict(
         type='TopDownUnetHead',
         in_channels=2048,
         out_channels=channel_cfg['num_output_channels'],
+        extra=dict(
+            in_channels=16,
+            out_channels=16,
+            att_type='att'
+        )
     ),
     train_cfg=dict(),
     test_cfg=dict(
@@ -118,7 +123,7 @@ test_pipeline = val_pipeline
 
 data_root = 'data/coco'
 data = dict(
-    samples_per_gpu=32,
+    samples_per_gpu=16,
     workers_per_gpu=2,
     train=dict(
         type='TopDownCocoDataset',
