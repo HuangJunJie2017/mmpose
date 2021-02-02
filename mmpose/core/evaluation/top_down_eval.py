@@ -89,7 +89,7 @@ def _get_max_preds(heatmaps):
     return preds, maxvals
 
 
-def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None):
+def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None, return_gts_preds=False):
     """Calculate the pose accuracy of PCK for each individual keypoint and the
     averaged accuracy across all keypoints from heatmaps.
 
@@ -113,6 +113,7 @@ def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None):
             accuracy calculation.
         thr (float): Threshold of PCK calculation. Default 0.05.
         normalize (np.ndarray[N, 2]): Normalization factor for H&W.
+        return_gts_preds (bool): Whether return the gts and preds kpt coordinates
 
     Returns:
         tuple: A tuple containing keypoint accuracy.
@@ -129,6 +130,9 @@ def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None):
 
     pred, _ = _get_max_preds(output)
     gt, _ = _get_max_preds(target)
+    if return_gts_preds:
+        acc, avg_acc, cnt = keypoint_pck_accuracy(pred, gt, mask, thr, normalize)
+        return acc, avg_acc, cnt, gt, pred
     return keypoint_pck_accuracy(pred, gt, mask, thr, normalize)
 
 

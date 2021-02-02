@@ -319,14 +319,14 @@ class PGCN(nn.Module):
 
         return adj_mx_from_edges(num_joints, edge, False)
 
-if __name__ == "__main__":
-    net = PGCN(type='non_local').cuda()
-    import numpy as np
-    param_num = 0
-    for tag, val in net.named_parameters():
-        param_num += np.prod(val.shape)
-    print('param: ', param_num)
+# if __name__ == "__main__":
+#     net = PGCN(type='non_local').cuda()
+#     import numpy as np
+#     param_num = 0
+#     for tag, val in net.named_parameters():
+#         param_num += np.prod(val.shape)
+#     print('param: ', param_num)
 
-    input = torch.rand(8, 17, 64, 48)
-    out = net(input)
-    print(out.shape)
+#     input = torch.rand(8, 17, 64, 48)
+#     out = net(input)
+#     print(out.shape)

@@ -3,7 +3,7 @@ from mmcv.cnn import (build_conv_layer, build_upsample_layer, constant_init,
                       normal_init)
 
 from ..registry import HEADS
-from .pgcn import PGCN
+from ..gcns import PGCN
 from .top_down_simple_head import TopDownSimpleHead
 
 
