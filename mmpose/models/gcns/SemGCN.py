@@ -130,7 +130,7 @@ class SemGraphConv(nn.Module):
 
         self.adj = adj
         self.m = (self.adj > 0)
-        self.e = nn.Parameter(torch.zeros(1, len(self.m.nonzero()), dtype=torch.float))
+        self.e = nn.Parameter(torch.zeros(1, len(self.m.nonzero(as_tuple=False)), dtype=torch.float))
         nn.init.constant_(self.e.data, 1)
 
         if bias:

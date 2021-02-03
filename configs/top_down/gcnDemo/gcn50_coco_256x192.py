@@ -1,16 +1,15 @@
 log_level = 'INFO'
 # load_from should be the trained cfa weight
-load_from = None
+load_from ='work_dirs/res50_coco_256x192/model_best_cfa.pth'
 resume_from = None
-resume_from = 'work_dirs/gcn50_m_256x192/epoch_latest.pth'
 dist_params = dict(backend='nccl')
 workflow = [('train', 1)]
-checkpoint_config = dict(interval=210, with_indicator=False)
-evaluation = dict(interval=1, metric='mAP', key_indicator='AP', start_epoch=150)
+checkpoint_config = dict(type='MyCheckpointHook', interval=10, with_indicator=False)
+evaluation = dict(interval=10, metric='mAP', key_indicator='AP', start_epoch=170)
 
 optimizer = dict(
     type='Adam',
-    lr=5e-4,
+    lr=1e-3,
     # paramwise_cfg is used to freeze backbone and keypoint_head params
     paramwise_cfg=dict(
         custom_keys={'backbone.': dict(lr_mult=0.0),
@@ -62,6 +61,7 @@ model = dict(
         modulate_kernel=11),
     loss_pose=dict(type='JointsMSELoss', use_target_weight=True, crit_type='L1Loss'), 
     extra=dict(
+        backbone_acc=True,
         # only_inference means not update backbone params and not calculate backbone heatmap mse_loss
         only_inference=True, 
         # test backbone ap
