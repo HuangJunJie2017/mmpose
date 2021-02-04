@@ -58,7 +58,7 @@ class _ResGraphConv_Attention(nn.Module):
         self.bn = nn.BatchNorm1d(output_dim)
         self.relu = nn.ReLU()
         '''node attention is implemented by SE'''
-        self.attention = Node_Attention(output_dim)
+        self.attention = Node_Attention(output_dim, num_joints=adj.shape[0])
 
     def forward(self, x, joint_features):
         if joint_features is None:
@@ -80,7 +80,7 @@ class _ResGraphConv_Attention(nn.Module):
 
 
 class Node_Attention(nn.Module):
-    def __init__(self,channels):
+    def __init__(self,channels, num_joints=17):
         '''
         likely SElayer
         '''
@@ -89,10 +89,11 @@ class Node_Attention(nn.Module):
         self.squeeze = nn.Sequential(
             nn.Linear(channels,channels//4),
             nn.ReLU(),
-            nn.Linear(channels//4, 17),
+            nn.Linear(channels//4, num_joints),
             nn.Sigmoid()
         )
     def forward(self, x):
+
         out = self.avg(x).squeeze(2)
         out = self.squeeze(out)
         out = out[:,None,:]

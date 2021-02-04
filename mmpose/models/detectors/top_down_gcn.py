@@ -34,6 +34,7 @@ class TopDownGCN(BasePose):
     def __init__(self,
                  backbone,
                  keypoint_head=None,
+                 gcn_head=None,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None,
@@ -45,7 +46,7 @@ class TopDownGCN(BasePose):
 
         if keypoint_head is not None:
             self.keypoint_head = builder.build_head(keypoint_head)
-        self.semgcn_fc = SemGCN_FC(hid_dim=[128, 128, 128, 128, 128])
+        self.semgcn_fc = SemGCN_FC(**gcn_head)
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.loss = builder.build_loss(loss_pose)
@@ -117,10 +118,20 @@ class TopDownGCN(BasePose):
 
     def forward_train(self, img, target, target_weight, img_metas, **kwargs):
         """Defines the computation performed at every call when training."""
-        output = self.backbone(img)
-        if self.with_keypoint:
-            '''losses, final_heatmap, [[N, 256, 16, 12] [N, 256, 32, 24] [N, 256, 64, 48]]'''
-            output, cfa_out = self.keypoint_head(output)
+
+        if self.extra.get('only_inference', True):
+            self.backbone.eval()
+            self.keypoint_head.eval()
+            with torch.no_grad():
+                output = self.backbone(img)
+                if self.with_keypoint:
+                    '''losses, final_heatmap, [[N, 256, 16, 12] [N, 256, 32, 24] [N, 256, 64, 48]]'''
+                    output, cfa_out = self.keypoint_head(output)
+        else:
+            output = self.backbone(img)
+            if self.with_keypoint:
+                '''losses, final_heatmap, [[N, 256, 16, 12] [N, 256, 32, 24] [N, 256, 64, 48]]'''
+                output, cfa_out = self.keypoint_head(output)
 
         # if return loss
         self.losses = dict()
@@ -170,9 +181,7 @@ class TopDownGCN(BasePose):
         self.losses['acc_gcn'] = float(integral_acc)
 
         # calculate output_heatmap_loss, multi_poses_loss, integral_coords_loss
-        only_inference = self.extra.get('only_inference', False)
-
-        if not only_inference:
+        if not self.extra.get('only_inference', True):
             self.calcu_loss(output, target, target_weight)
 
         coord_target = torch.from_numpy(gt_norm).cuda()

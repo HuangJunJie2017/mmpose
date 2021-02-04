@@ -54,9 +54,6 @@ class SemGCN_FC(nn.Module):
         # 这个heatmap_generator是用backbone网络的不同阶段feature生成最后的heatmap, 和不同尺度的feature
         self.heat_map_generator =HM_Extrect(num_joints)
 
-        adj = [[15, 13], [13, 11], [16, 14], [14, 12], [11, 12], [5, 11], [6, 12], \
-            [5, 6], [5, 7], [6, 8], [7, 9], [8, 10], [1, 2], [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6]]
-
         self.adj = self._build_adj_mx_from_edges(num_joints=num_joints, edge=adj)
         # self.adj_matrix 就是 self.adj
         adj = self.adj_matrix
