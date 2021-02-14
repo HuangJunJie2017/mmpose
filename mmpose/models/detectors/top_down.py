@@ -180,18 +180,17 @@ class TopDown(BasePose):
 
     def forward_test(self, img, img_metas, return_heatmap=False, **kwargs):
         """Defines the computation performed at every call when testing."""
-        assert img.size(0) == 1
-        assert len(img_metas) == 1
-        img_metas = img_metas[0]
+        # img_metas list[dict]
+        assert img.size(0) == len(img_metas)
 
         # compute backbone features
         output = self.backbone(img)
 
         # process head
-        all_preds, all_boxes, image_path, heatmap = self.process_head(
+        result = self.process_head(
             output, img, img_metas, return_heatmap=return_heatmap)
 
-        return all_preds, all_boxes, image_path, heatmap
+        return result
 
     def forward_dummy(self, img):
         """Used for computing network FLOPs.
@@ -211,7 +210,9 @@ class TopDown(BasePose):
 
     def process_head(self, output, img, img_metas, return_heatmap=False):
         """Process heatmap and keypoints from backbone features."""
-        flip_pairs = img_metas['flip_pairs']
+
+        num_images = len(img_metas)
+        flip_pairs = img_metas[0]['flip_pairs']
 
         if self.with_keypoint:
             output = self.keypoint_head(output)
@@ -238,12 +239,15 @@ class TopDown(BasePose):
                 output_flipped[:, :, :, 1:] = output_flipped[:, :, :, :-1]
             output_heatmap = (output_heatmap + output_flipped) * 0.5
 
-        c = img_metas['center'].reshape(1, -1)
-        s = img_metas['scale'].reshape(1, -1)
+        c_list = [item['center'].reshape(1, -1) for item in img_metas]
+        s_list = [item['scale'].reshape(1, -1) for item in img_metas]
+        c = np.concatenate(c_list)
+        s = np.concatenate(s_list)
 
-        score = 1.0
-        if 'bbox_score' in img_metas:
-            score = np.array(img_metas['bbox_score']).reshape(-1)
+        if 'bbox_score' in img_metas[0]:
+            score = [np.array(item['bbox_score']).reshape(-1) for item in img_metas]
+        else:
+            score = np.ones(num_images)
 
         preds, maxvals = keypoints_from_heatmaps(
             output_heatmap,
@@ -257,22 +261,25 @@ class TopDown(BasePose):
                                                   0.0546875),
             target_type=self.test_cfg.get('target_type', 'GaussianHeatMap'))
 
-        all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
-        all_boxes = np.zeros((1, 6), dtype=np.float32)
-        image_path = []
+        results = []
+        for i in range(num_images):
+            image_path = []
+            all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
+            all_boxes = np.zeros((1, 6), dtype=np.float32)
+            all_preds[0, :, 0:2] = preds[i, :, 0:2]
+            all_preds[0, :, 2:3] = maxvals[i]
+            all_boxes[0, 0:2] = c[i, 0:2]
+            all_boxes[0, 2:4] = s[i, 0:2]
+            all_boxes[0, 4] = np.prod(s[i][np.newaxis, ...] * 200.0, axis=1)
+            all_boxes[0, 5] = score[i]
+            image_path.extend(img_metas[i]['image_file'])
 
-        all_preds[0, :, 0:2] = preds[:, :, 0:2]
-        all_preds[0, :, 2:3] = maxvals
-        all_boxes[0, 0:2] = c[:, 0:2]
-        all_boxes[0, 2:4] = s[:, 0:2]
-        all_boxes[0, 4] = np.prod(s * 200.0, axis=1)
-        all_boxes[0, 5] = score
-        image_path.extend(img_metas['image_file'])
+            if not return_heatmap:
+                output_heatmap = None
 
-        if not return_heatmap:
-            output_heatmap = None
+            results.append([all_preds, all_boxes, image_path, output_heatmap])
 
-        return all_preds, all_boxes, image_path, output_heatmap
+        return results
 
     def show_result(self,
                     img,

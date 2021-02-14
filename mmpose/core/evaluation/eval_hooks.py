@@ -3,6 +3,7 @@ from math import inf
 
 import mmcv
 from mmcv.runner import Hook
+from mmcv.runner.checkpoint import save_checkpoint
 from torch.utils.data import DataLoader
 
 from mmpose.utils import get_root_logger
@@ -148,12 +149,17 @@ class DistEvalHook(EvalHook):
             localization dataset (ActivityNetDataset). Default: `top1_acc`.
         rule (str | None): Comparison rule for best score. If set to None,
             it will infer a reasonable rule. Default: 'None'.
+        start_epoch (int): Begin evaluating from the given epoch.
         eval_kwargs (dict, optional): Arguments for evaluation.
     """
 
     def after_train_epoch(self, runner):
         """Called after each training epoch to evaluate the model."""
         if not self.every_n_epochs(runner, self.interval):
+            return
+
+        start_epoch = self.eval_kwargs.get('start_epoch', -1)
+        if start_epoch != -1 and (runner.epoch + 1) < start_epoch:
             return
 
         current_ckpt_path = osp.join(runner.work_dir,
@@ -180,6 +186,8 @@ class DistEvalHook(EvalHook):
                 self.best_score = key_score
                 self.logger.info(
                     f'Now best checkpoint is epoch_{runner.epoch + 1}.pth')
+                save_checkpoint(runner.model, osp.join(runner.work_dir, 'model_best.pth'))
+                self.logger.info(f'Saved best model at epoch {runner.epoch + 1} !')
                 self.best_json['best_score'] = self.best_score
                 self.best_json['best_ckpt'] = current_ckpt_path
                 self.best_json['key_indicator'] = self.key_indicator
