@@ -2,41 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-def generate_2d_integral_preds_tensor(heatmaps, num_joints, x_dim, y_dim):
-    assert isinstance(heatmaps, torch.Tensor)
 
-    heatmaps = heatmaps.reshape((heatmaps.shape[0], num_joints, y_dim, x_dim))
-
-    accu_x = heatmaps.sum(dim=2)
-    accu_y = heatmaps.sum(dim=3)
-
-
-    accu_x = accu_x * torch.cuda.comm.broadcast(torch.arange(x_dim).type(torch.cuda.FloatTensor), devices=[accu_x.device.index])[0]
-    accu_y = accu_y * torch.cuda.comm.broadcast(torch.arange(y_dim).type(torch.cuda.FloatTensor), devices=[accu_y.device.index])[0]
-
-    accu_x = accu_x.sum(dim=2, keepdim=True)
-    accu_y = accu_y.sum(dim=2, keepdim=True)
-
-    return accu_x, accu_y
-
-
-def softmax_integral_tensor(preds, num_joints, hm_width, hm_height):
-    # global soft max
-    preds = preds.reshape((preds.shape[0], num_joints, -1))
-    preds = F.softmax(preds, 2)
-    score = torch.max(preds,-1)[0]
-
-    # integrate heatmap into joint location
-    x, y= generate_2d_integral_preds_tensor(preds, num_joints, hm_width, hm_height)
-    x = x / float(hm_width) - 0.5
-    y = y / float(hm_height) - 0.5
-
-
-    preds = torch.cat((x, y), dim=2)
-    preds*=2
-    preds = preds.reshape((preds.shape[0], num_joints * 2))
-    return preds,score
-    
 def make_conv3x3(
     in_channels,
     out_channels,

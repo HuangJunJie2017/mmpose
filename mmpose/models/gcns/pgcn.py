@@ -5,6 +5,9 @@ from scipy import sparse as sp
 import numpy as np
 import math
 
+# import registor
+from ..registry import GCNS
+
 
 class _GraphConv(nn.Module):
     def __init__(self, adj, in_channels=1, out_channels=1, num_joints=17, p_dropout=None, type='att'):
@@ -227,6 +230,7 @@ class NonLocalGraphConv(nn.Module):
         return self.__class__.__name__ + ' (' + str(self.in_channels) + ' -> ' + str(self.in_channels) + ')'
 
 
+@GCNS.register_module()
 class PGCN(nn.Module):
     """Implementation of PGCN proposed in ``Structure-aware human pose 
     estimation with graph convolutional networks``.

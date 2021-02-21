@@ -111,7 +111,6 @@ class SemGraphConv(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         
-        # TODO: adj是干嘛用的？咋都没怎么设置？
         #very useful demo means this is Parameter, which can be adjust by bp methods
         self.W = nn.Parameter(torch.zeros(size=(2, in_features, out_features), dtype=torch.float))
         nn.init.xavier_uniform_(self.W.data, gain=1.414)

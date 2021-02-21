@@ -1,14 +1,21 @@
 log_level = 'INFO'
-load_from = None
+# load_from should be the trained cfa weight
+load_from ='work_dirs/cfa50_crowdpose_256x192/model_best.pth'
+# load_from = None
 resume_from = None
 dist_params = dict(backend='nccl')
 workflow = [('train', 1)]
-checkpoint_config = dict(interval=210, with_indicator=False)
-evaluation = dict(interval=10, metric='mAP', start_epoch=170)
+checkpoint_config = dict(type='MyCheckpointHook', interval=50, with_indicator=False)
+evaluation = dict(interval=10, metric='mAP', key_indicator='AP', start_epoch=100)
 
 optimizer = dict(
     type='Adam',
     lr=1e-3,
+    # paramwise_cfg is used to freeze backbone and keypoint_head params
+    paramwise_cfg=dict(
+        custom_keys={'backbone.': dict(lr_mult=0.0),
+                     'keypoint_head.': dict(lr_mult=0.0)}
+    )
 )
 optimizer_config = dict(grad_clip=None)
 # learning policy
@@ -20,7 +27,7 @@ lr_config = dict(
     step=[170, 200])
 total_epochs = 210
 log_config = dict(
-    interval=50,
+    interval=100,
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(type='TensorboardLoggerHook')
@@ -36,22 +43,35 @@ channel_cfg = dict(
 
 # model settings
 model = dict(
-    type='TopDown',
+    type='TopDownGCN',
     pretrained='torchvision://resnet50',
     backbone=dict(type='ResNet', depth=50),
     keypoint_head=dict(
         type='TopDownCFAHead',
         in_channels=2048,
         out_channels=channel_cfg['num_output_channels'], 
-        extra=dict(cfa_out=False)
+        extra=dict(cfa_out=True)
     ),
-    train_cfg=dict(),
+    gcn_head=dict(
+        type='SemGCN_FC',
+        adj=[[12, 13],[13,0],[13,1],[0,2],[2,4],[1,3],[3,5],[13, 7],[13,6],[7,9],[9,11],[6,8],[8,10]],
+        num_joints=channel_cfg['num_output_channels'],
+        hid_dim=[128, 128, 128, 128, 128]
+    ),
+    train_cfg=dict(loss_weights=[0.3, 0.5, 1, 1]),
     test_cfg=dict(
         flip_test=True,
         post_process='default',
         shift_heatmap=True,
         modulate_kernel=11),
-    loss_pose=dict(type='JointsMSELoss', use_target_weight=True))
+    loss_pose=dict(type='JointsMSELoss', use_target_weight=True, crit_type='L1Loss'), 
+    extra=dict(
+        backbone_acc=True,
+        # only_inference means not update backbone params and not calculate backbone heatmap mse_loss
+        only_inference=True, 
+        # test backbone ap
+        backbone_test=False, 
+        train_flip=True))
 
 data_cfg = dict(
     image_size=[192, 256],
@@ -119,7 +139,7 @@ test_pipeline = val_pipeline
 data_root = 'data/crowdpose'
 data = dict(
     samples_per_gpu=64,
-    workers_per_gpu=2,
+    workers_per_gpu=4,
     train=dict(
         type='TopDownCrowdPoseDataset',
         ann_file=f'{data_root}/annotations/mmpose_crowdpose_trainval.json',

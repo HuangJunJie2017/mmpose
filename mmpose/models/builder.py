@@ -1,7 +1,7 @@
 from mmcv.utils import build_from_cfg
 from torch import nn
 
-from .registry import BACKBONES, HEADS, LOSSES, POSENETS
+from .registry import BACKBONES, HEADS, LOSSES, POSENETS, GCNS
 
 
 def build(cfg, registry, default_args=None):
@@ -45,3 +45,7 @@ def build_loss(cfg):
 def build_posenet(cfg):
     """Build posenet."""
     return build(cfg, POSENETS)
+
+def build_gcn(cfg):
+    """Build gcn."""
+    return build(cfg, GCNS)

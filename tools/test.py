@@ -78,7 +78,7 @@ def main():
     dataset = build_dataset(cfg.data.test, dict(test_mode=True))
     data_loader = build_dataloader(
         dataset,
-        samples_per_gpu=1,
+        samples_per_gpu=32,
         workers_per_gpu=cfg.data.workers_per_gpu,
         dist=distributed,
         shuffle=False)

@@ -2,6 +2,7 @@ import math
 
 import cv2
 import mmcv
+import warnings
 import numpy as np
 
 import torch
@@ -46,7 +47,8 @@ class TopDownGCN(BasePose):
 
         if keypoint_head is not None:
             self.keypoint_head = builder.build_head(keypoint_head)
-        self.semgcn_fc = SemGCN_FC(**gcn_head)
+        self.gcn = builder.build_gcn(gcn_head)
+        # self.semgcn_fc = SemGCN_FC(**gcn_head)
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.loss = builder.build_loss(loss_pose)
@@ -119,6 +121,7 @@ class TopDownGCN(BasePose):
     def forward_train(self, img, target, target_weight, img_metas, **kwargs):
         """Defines the computation performed at every call when training."""
 
+        train_flip = self.extra.get('train_flip', False)
         if self.extra.get('only_inference', True):
             self.backbone.eval()
             self.keypoint_head.eval()
@@ -127,39 +130,34 @@ class TopDownGCN(BasePose):
                 if self.with_keypoint:
                     '''losses, final_heatmap, [[N, 256, 16, 12] [N, 256, 32, 24] [N, 256, 64, 48]]'''
                     output, cfa_out = self.keypoint_head(output)
+                if train_flip:
+                    output_heatmap = self.train_flip(img, output, flip_pairs=img_metas[0]['flip_pairs'])
+                else:
+                    if isinstance(output, list):
+                        output = output[-1]
+                    output_heatmap = output.detach().cpu().numpy()
         else:
+            if train_flip:
+                warnings.warn('Under backbone train mode, train_flip is not available!')
             output = self.backbone(img)
             if self.with_keypoint:
                 '''losses, final_heatmap, [[N, 256, 16, 12] [N, 256, 32, 24] [N, 256, 64, 48]]'''
                 output, cfa_out = self.keypoint_head(output)
+                if isinstance(output, list):
+                    output_heatmap = output[-1].detach().cpu().numpy()
+                else:
+                    output_heatmap = output.detach().cpu().numpy()
 
         # if return loss
         self.losses = dict()
 
         if self.target_type == 'GaussianHeatMap':
-            if isinstance(output, list):
-                N, K, H, W = output[-1].shape
-                if target.dim() == 5 and target_weight.dim() == 4:
-                    _, avg_acc, _, gt, pred = pose_pck_accuracy(
-                        output[-1].detach().cpu().numpy(),
-                        target[:, -1, ...].detach().cpu().numpy(),
-                        target_weight[:, -1,
-                                      ...].detach().cpu().numpy().squeeze(-1) >
-                        0, return_gts_preds=True)
-                    # Only use the last output for prediction
-                else:
-                    _, avg_acc, _, gt, pred = pose_pck_accuracy(
-                        output[-1].detach().cpu().numpy(),
-                        target.detach().cpu().numpy(),
-                        target_weight.detach().cpu().numpy().squeeze(-1) > 0, 
-                        return_gts_preds=True)
-            else:
-                N, K, H, W = output.shape
-                _, avg_acc, _, gt, pred = pose_pck_accuracy(
-                    output.detach().cpu().numpy(),
-                    target.detach().cpu().numpy(),
-                    target_weight.detach().cpu().numpy().squeeze(-1) > 0, 
-                    return_gts_preds=True)
+            N, K, H, W = output_heatmap.shape
+            _, avg_acc, _, gt, pred = pose_pck_accuracy(
+                output_heatmap,
+                target.detach().cpu().numpy(),
+                target_weight.detach().cpu().numpy().squeeze(-1) > 0, 
+                return_gts_preds=True)
 
         # whether log backbone acc_pose 
         if self.extra.get('backbone_acc', False):
@@ -167,7 +165,7 @@ class TopDownGCN(BasePose):
 
         # map backbone pred and gt coords into grid_sample space [-1, 1]
         pred_norm, gt_norm = self.normalize(pred.copy(), gt.copy())
-        multi_poses, integral_coords = self.semgcn_fc(x=pred_norm, ret_features=cfa_out)
+        multi_poses, integral_coords = self.gcn(x=pred_norm, ret_features=cfa_out)
         # map OPEC-NET predict coords back to heatmap space
         integral_coords_reverse = self.normalize(multi_poses[-1].detach().cpu().numpy(), reverse=True)
 
@@ -230,6 +228,31 @@ class TopDownGCN(BasePose):
             # target_weight: [batch_size, num_joints, 1]
             self.losses[key] = self.loss(output, target, target_weight)
 
+    def train_flip(self, img, output, flip_pairs):
+        img_flipped = img.flip(3)
+        output_flipped = self.backbone(img_flipped)
+        if self.with_keypoint:
+            output_flipped, _ = self.keypoint_head(output_flipped)
+        
+        if isinstance(output_flipped, list):
+            output_flipped = output_flipped[-1]
+        if isinstance(output, list):
+            output = output[-1]
+        
+        output_heatmap = output.detach().cpu().numpy()
+        output_flipped_heatmap = output_flipped.detach().cpu().numpy()
+        output_flipped_heatmap = flip_back(
+            output_flipped_heatmap, 
+            flip_pairs, 
+            target_type=self.target_type
+        )
+
+        if self.test_cfg['shift_heatmap']:
+            output_flipped_heatmap[:, :, :, 1:] = output_flipped_heatmap[:, :, :, :-1]
+        output_heatmap = (output_heatmap + output_flipped_heatmap) * 0.5
+
+        return output_heatmap
+
     def forward_test(self, img, img_metas, return_heatmap=False, **kwargs):
         """Defines the computation performed at every call when testing."""
         # img_metas list[dict]
@@ -239,7 +262,7 @@ class TopDownGCN(BasePose):
         output = self.backbone(img)
 
         # process head
-        result = self.process_head_integral(
+        result = self.process_head(
             output, img, img_metas, return_heatmap=return_heatmap)
 
         return result
@@ -261,7 +284,7 @@ class TopDownGCN(BasePose):
             output = self.keypoint_head(output)
         return output
 
-    def process_head_integral(self, output, img, img_metas, return_heatmap=False):
+    def process_head(self, output, img, img_metas, return_heatmap=False):
         """Process heatmap and keypoints from backbone features."""
 
         num_images = len(img_metas)
@@ -271,55 +294,20 @@ class TopDownGCN(BasePose):
             '''losses, final_heatmap, [[N, 256, 16, 12] [N, 256, 32, 24] [N, 256, 64, 48]]'''
             output, cfa_out = self.keypoint_head(output)
 
-        if isinstance(output, list):
-            output = output[-1]
-
-        output_heatmap = output.detach().cpu().numpy()
-        N, K, H, W = output_heatmap.shape
-        pred, maxvals = _get_max_preds(output_heatmap)
-
-        # map pred into [-1, 1]
-        pred_normalize = self.normalize(pred.copy())
-        multi_poses, integral_coords = self.semgcn_fc(x=pred_normalize, ret_features=cfa_out)
-
         # TODO flip_test not work for now
         backbone_test = self.extra.get('backbone_test', False)
         if self.test_cfg['flip_test']:
-            img_flipped = img.flip(3)
-
-            output_flipped = self.backbone(img_flipped)
-            if self.with_keypoint:
-                output_flipped, cfa_out_flipped = self.keypoint_head(output_flipped)
-
-            if isinstance(output_flipped, list):
-                output_flipped = output_flipped[-1]
-            
-            if backbone_test:
-                output_flipped_heatmap = output_flipped.detach().cpu().numpy()
-                output_flipped_heatmap = flip_back(
-                    output_flipped_heatmap, 
-                    flip_pairs, 
-                    target_type=self.target_type
-                )
-
-                if self.test_cfg['shift_heatmap']:
-                    output_flipped_heatmap[:, :, :, 1:] = output_flipped_heatmap[:, :, :, :-1]
-                output_heatmap = (output_heatmap + output_flipped_heatmap) * 0.5
-
-            # get flipped pred
-            pred_flipped, _ = _get_max_preds(output_flipped.detach().cpu().numpy())
-            pred_flipped = self.normalize(pred_flipped)
-            
-            multi_poses_flipped, integral_coords_flipped = self.semgcn_fc(x=pred_flipped, ret_features=cfa_out_flipped)
-            
-            coords_flipped = self.flip_back_coords(
-                multi_poses_flipped[-1].detach().cpu().numpy(),
-                flip_pairs, 
-                W)
-            
-            preds = (multi_poses[-1].detach().cpu().numpy() + coords_flipped) * 0.5
+            output_heatmap = self.train_flip(img, output, flip_pairs=flip_pairs)
         else:
-            preds = multi_poses[-1].detach().cpu().numpy()
+            if isinstance(output, list):
+                output = output[-1]
+            output_heatmap = output.detach().cpu().numpy()
+        N, K, H, W = output_heatmap.shape
+        pred, maxvals = _get_max_preds(output_heatmap)
+        # map pred into [-1, 1]
+        pred_normalize = self.normalize(pred.copy())
+        multi_poses, integral_coords = self.gcn(x=pred_normalize, ret_features=cfa_out)
+        preds = multi_poses[-1].detach().cpu().numpy()
 
         c_list = [item['center'].reshape(1, -1) for item in img_metas]
         s_list = [item['scale'].reshape(1, -1) for item in img_metas]
@@ -387,6 +375,16 @@ class TopDownGCN(BasePose):
 
         return coords_flipped_back
 
+    def flip_back_cfa_out(self, cfa_out):
+        """cfa_out_flipped (List): [[N, C, H, W]]"""
+        cfa_out_flip_back = []
+        for item in cfa_out:
+            item_flipback = item.detach().cpu().numpy()
+            item_flipback = item_flipback[..., ::-1].copy()
+            cfa_out_flip_back.append(torch.from_numpy(item_flipback).cuda(device=item.device))
+
+        return cfa_out_flip_back
+
     def normalize(self, pred, gt=None, h=64, w=48, reverse=False):
 
         for N in range(pred.shape[0]):
@@ -424,80 +422,6 @@ class TopDownGCN(BasePose):
         x[:, 1] = x[:, 1] * float(h)
 
         return x
-
-    def process_head(self, output, img, img_metas, return_heatmap=False):
-        """Process heatmap and keypoints from backbone features."""
-
-        num_images = len(img_metas)
-        flip_pairs = img_metas[0]['flip_pairs']
-
-        if self.with_keypoint:
-            output, _ = self.keypoint_head(output)
-
-        if isinstance(output, list):
-            output = output[-1]
-
-        output_heatmap = output.detach().cpu().numpy()
-        if self.test_cfg['flip_test']:
-            img_flipped = img.flip(3)
-
-            output_flipped = self.backbone(img_flipped)
-            if self.with_keypoint:
-                output_flipped, _ = self.keypoint_head(output_flipped)
-            if isinstance(output_flipped, list):
-                output_flipped = output_flipped[-1]
-            output_flipped = flip_back(
-                output_flipped.detach().cpu().numpy(),
-                flip_pairs,
-                target_type=self.target_type)
-
-            # feature is not aligned, shift flipped heatmap for higher accuracy
-            if self.test_cfg['shift_heatmap']:
-                output_flipped[:, :, :, 1:] = output_flipped[:, :, :, :-1]
-            output_heatmap = (output_heatmap + output_flipped) * 0.5
-
-        c_list = [item['center'].reshape(1, -1) for item in img_metas]
-        s_list = [item['scale'].reshape(1, -1) for item in img_metas]
-        c = np.concatenate(c_list)
-        s = np.concatenate(s_list)
-
-        if 'bbox_score' in img_metas[0]:
-            score = [np.array(item['bbox_score']).reshape(-1) for item in img_metas]
-        else:
-            score = np.ones(num_images)
-
-        preds, maxvals = keypoints_from_heatmaps(
-            output_heatmap,
-            c,
-            s,
-            post_process=self.test_cfg['post_process'],
-            unbiased=self.test_cfg.get('unbiased_decoding', False),
-            kernel=self.test_cfg['modulate_kernel'],
-            use_udp=self.test_cfg.get('use_udp', False),
-            valid_radius_factor=self.test_cfg.get('valid_radius_factor',
-                                                  0.0546875),
-            target_type=self.test_cfg.get('target_type', 'GaussianHeatMap'))
-
-        results = []
-        for i in range(num_images):
-            all_preds = np.zeros((1, preds.shape[1], 3), dtype=np.float32)
-            all_boxes = np.zeros((1, 6), dtype=np.float32)
-            image_path = []
-
-            all_preds[0, :, 0:2] = preds[i, :, 0:2]
-            all_preds[0, :, 2:3] = maxvals[i]
-            all_boxes[0, 0:2] = c[i, 0:2]
-            all_boxes[0, 2:4] = s[i, 0:2]
-            all_boxes[0, 4] = np.prod(s[i][np.newaxis, ...] * 200.0, axis=1)
-            all_boxes[0, 5] = score[i]
-            image_path.extend(img_metas[i]['image_file'])
-
-            if not return_heatmap:
-                output_heatmap = None
-
-            results.append([all_preds, all_boxes, image_path, output_heatmap])
-
-        return results
 
     def show_result(self,
                     img,
