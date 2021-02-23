@@ -6,7 +6,7 @@ resume_from = None
 dist_params = dict(backend='nccl')
 workflow = [('train', 1)]
 checkpoint_config = dict(interval=20)
-evaluation = dict(interval=10, metric='mAP', key_indicator='AP', start_epoch=170)
+evaluation = dict(interval=10, metric='mAP', key_indicator='AP', start_epoch=10)
 
 optimizer = dict(
     type='Adam',
@@ -53,7 +53,7 @@ model = dict(
         extra=dict(cfa_out=True)
     ),
     gcn_head=dict(
-        type='SemGCN_FC',
+        type='BaseSSRNet',
         adj=[[12, 13],[13,0],[13,1],[0,2],[2,4],[1,3],[3,5],[13, 7],[13,6],[7,9],[9,11],[6,8],[8,10]],
         num_joints=channel_cfg['num_output_channels'],
         hid_dim=[128, 128, 128, 128, 128],
@@ -140,8 +140,8 @@ test_pipeline = val_pipeline
 
 data_root = 'data/crowdpose'
 data = dict(
-    samples_per_gpu=64,
-    workers_per_gpu=4,
+    samples_per_gpu=32,
+    workers_per_gpu=2,
     train=dict(
         type='TopDownCrowdPoseDataset',
         ann_file=f'{data_root}/annotations/mmpose_crowdpose_trainval.json',

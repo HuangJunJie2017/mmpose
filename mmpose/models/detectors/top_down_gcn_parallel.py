@@ -371,44 +371,6 @@ class TopDownGCNParallel(BasePose):
 
         return cfa_out_flip_back
 
-    def normalize(self, pred, gt=None, h=64, w=48, reverse=False):
-
-        for N in range(pred.shape[0]):
-            if reverse:
-                pred[N, :, :2] = self.reverse_normalize(pred[N, :, :2], h, w)
-            else:
-                pred[N, :, :2] = self.normalize_screen_coordinates(pred[N, :, :2], h, w)
-            if gt is not None:
-                if reverse:
-                    gt[N, :, :2] = self.reverse_normalize(gt[N, :, :2], h, w)
-                else:
-                    gt[N, :, :2] = self.normalize_screen_coordinates(gt[N, :, :2], h, w)
-        
-        if gt is not None:
-            return pred, gt
-        
-        return pred
-    
-    def normalize_screen_coordinates(self, x, h=64, w=48):
-        assert x.shape[-1] == 2
-        # Normalize so that [0, w] is mapped to [-1, 1], while preserving the aspect ratio
-        #Normalize
-
-        x[:,0] = x[:,0] / float(w) - 0.5
-        x[:,1] = x[:,1] / float(h) - 0.5
-        
-        return x * 2
-
-    def reverse_normalize(self, x, h=64, w=48):
-        assert x.shape[-1] == 2
-
-        x /= 2.
-        x += 0.5
-        x[:, 0] = x[:, 0] * float(w)
-        x[:, 1] = x[:, 1] * float(h)
-
-        return x
-
     def show_result(self,
                     img,
                     result,

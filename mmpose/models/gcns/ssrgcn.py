@@ -5,37 +5,52 @@ from .semgcn import _ResGraphConv_Attention,SemGraphConv,_GraphConv
 from scipy import sparse as sp
 import numpy as np
 
+from mmcv.cnn import (build_conv_layer, build_upsample_layer, constant_init,
+                      normal_init)
 from .gcn_models import BaseGCN
 # import registor
 from ..registry import GCNS
 
 
 @GCNS.register_module()
-class Base_SSRNet(nn.Module):
-    
-    def __init__(self, adj=None, num_joints=17, hid_dim=None, coords_dim=(2, 2), p_dropout=None, IS=False):
-        '''
-        这里的adj就是人体骨架的连接顺序
-        :param adj:  adjacency matrix using for
-        :param hid_dim:
-        :param coords_dim:
-        :param num_layers:
-        :param nodes_group:
-        :param p_dropout:
-        '''
+class BaseSSRNet(nn.Module):
+    """
+    Args:
+        in_channels (list): Number of input channels of 
+            the backbone features fed into the head layer.
+        adj (list): list of skeleton connections.
+        num_joints (int): Number of joints.
+        coords_dim (tuple): Dimension of the joint coords.
+        IS (bool): Whether use intermediate supervision.
+        p (float): value of lambda in paper.
+    """
+    def __init__(self, 
+                 in_channels=(256, 256, 256),
+                 num_stage=3,
+                 num_deconv_filters=(256, 256, 256), 
+                 num_deconv_kernels=(4, 4, 4),
+                 adj=None,
+                 hid_dim=None,
+                 num_joints=17, 
+                 coords_dim=(2, 2), 
+                 IS=False, 
+                 p=0.5):
         super().__init__()
 
+        self.in_channels = in_channels
         self.adj = self._build_adj_mx_from_edges(num_joints=num_joints, edge=adj)
         self.num_joints = num_joints
         self.IS = IS
-        self.head0, self.head1, self.head2 = self._make_head_layer()
+        self.p = p
+
+        self.head0, self.head1, self.head2 = self._make_head_layer(num_stage, num_deconv_filters, num_deconv_kernels)
         self.encoder, self.decoder = self._make_encoder_decoder_layer()
 
         self.gcn0 = BaseGCN(adj=self.adj)
         self.gcn1 = BaseGCN(adj=self.adj)
         self.gcn2 = BaseGCN(adj=self.adj)
 
-    def forward(self, features, p=0.5):
+    def forward(self, features):
         '''
         features: 上采样的不同尺度的featuremap
         '''
@@ -50,15 +65,16 @@ class Base_SSRNet(nn.Module):
         # print('c0: ', c0.shape)
         c0_g = self.gcn0(c0)
         c1 = self.decoder(hm1.view(N * self.num_joints, -1)).view(N, self.num_joints, -1)
-        c1_g = self.gcn1(p * c1 + (1 - p) * (c0 + c0_g))
+        c1_g = self.gcn1(self.p * c1 + (1 - self.p) * (c0 + c0_g))
         c2 = self.decoder(hm2.view(N * self.num_joints, -1)).view(N, self.num_joints, -1)
-        c2_g = self.gcn2(p * c2 + (1 - p) * (c1 + c1_g))
+        c2_g = self.gcn2(self.p * c2 + (1 - self.p) * (c1 + c1_g))
+
         if self.IS:
             return [hm0, hm1, hm2], [c0_g+c0, c1_g+c1, c2_g+c2]
         else:
             return [hm2], [c2_g+c2]
 
-    def _make_head_layer(self, num_layers=3, num_filters=[256, 256, 256], num_kernels=[1, 1, 1]):
+    def _make_head_layer(self, num_layers, num_filters, num_kernels):
         """Make head layers."""
         if num_layers != len(num_filters):
             error_msg = f'num_layers({num_layers}) ' \
@@ -68,28 +84,45 @@ class Base_SSRNet(nn.Module):
             error_msg = f'num_layers({num_layers}) ' \
                         f'!= length of num_kernels({len(num_kernels)})'
             raise ValueError(error_msg)
+        if num_layers != len(self.in_channels):
+            error_msg = f'num_layers({num_layers}) ' \
+                        f'!= length of num_filters({len(self.in_channels)})'
+            raise ValueError(error_msg)
 
         layers = []
         for i in range(num_layers):
+            in_channels = self.in_channels[i]
             scale_factor = 2 ** (num_layers - 1 - i)
             layer = []
 
             planes = num_filters[i]
-            kernels = num_kernels[i]
-            if scale_factor != 1:
+            for j in range(num_layers-1-i):
+                kernel, padding, output_padding = self._get_deconv_cfg(num_kernels[i])
                 layer.append(
-                    nn.UpsamplingBilinear2d(scale_factor=scale_factor)
+                    build_upsample_layer(
+                        dict(type='deconv'),
+                        in_channels=in_channels,
+                        out_channels=planes,
+                        kernel_size=kernel,
+                        stride=2,
+                        padding=padding,
+                        output_padding=output_padding,
+                        bias=False)
                 )
-            layer.append(
-                nn.Conv2d(
-                    in_channels=planes, 
-                    out_channels=self.num_joints,
-                    kernel_size=kernels,
-                    bias=False
-                )
-            )
-            layers.append(nn.Sequential(*layer))
+                layer.append(nn.BatchNorm2d(planes))
+                layer.append(nn.ReLU(inplace=True))
+                in_channels = planes
 
+            layer.append(
+                build_conv_layer(
+                    cfg=dict(type='Conv2d'),
+                    in_channels=num_filters[-1],
+                    out_channels=self.num_joints,
+                    kernel_size=1,
+                    stride=1,
+                    padding=0))
+            layers.append(nn.Sequential(*layer))
+        
         return layers
 
     def _make_encoder_decoder_layer(self, out_channels=128, kernel=3, size=(64, 48)):
@@ -122,6 +155,23 @@ class Base_SSRNet(nn.Module):
             nn.Linear(256, 2)))
         
         return layers
+
+    @staticmethod
+    def _get_deconv_cfg(deconv_kernel):
+        """Get configurations for deconv layers."""
+        if deconv_kernel == 4:
+            padding = 1
+            output_padding = 0
+        elif deconv_kernel == 3:
+            padding = 1
+            output_padding = 1
+        elif deconv_kernel == 2:
+            padding = 0
+            output_padding = 0
+        else:
+            raise ValueError(f'Not supported num_kernels ({deconv_kernel}).')
+
+        return deconv_kernel, padding, output_padding
 
     @property
     def adj_matrix(self):
