@@ -13,9 +13,13 @@ class JointsMSELoss(nn.Module):
             Different joint types may have different target weights.
     """
 
-    def __init__(self, use_target_weight=False):
+    def __init__(self, use_target_weight=False, **kwargs):
         super().__init__()
-        self.criterion = nn.MSELoss()
+        crit_type = kwargs.get('crit_type', 'MSELoss')
+        if crit_type == 'MSELoss':
+            self.criterion = nn.MSELoss()
+        elif crit_type == 'L1Loss':
+            self.criterion = nn.L1Loss()
         self.use_target_weight = use_target_weight
 
     def forward(self, output, target, target_weight):

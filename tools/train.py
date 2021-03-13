@@ -16,6 +16,8 @@ from mmpose.datasets import build_dataset
 from mmpose.models import build_posenet
 from mmpose.utils import collect_env, get_root_logger
 
+from mmpose.core.checkpoint import MyCheckpointHook
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a pose model')

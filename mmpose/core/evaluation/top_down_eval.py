@@ -1,6 +1,7 @@
 import warnings
 
 import cv2
+import math
 import numpy as np
 
 from mmpose.core.post_processing import transform_preds
@@ -88,7 +89,7 @@ def _get_max_preds(heatmaps):
     return preds, maxvals
 
 
-def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None):
+def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None, return_gts_preds=False):
     """Calculate the pose accuracy of PCK for each individual keypoint and the
     averaged accuracy across all keypoints from heatmaps.
 
@@ -112,6 +113,7 @@ def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None):
             accuracy calculation.
         thr (float): Threshold of PCK calculation. Default 0.05.
         normalize (np.ndarray[N, 2]): Normalization factor for H&W.
+        return_gts_preds (bool): Whether return the gts and preds kpt coordinates
 
     Returns:
         tuple: A tuple containing keypoint accuracy.
@@ -128,6 +130,9 @@ def pose_pck_accuracy(output, target, mask, thr=0.05, normalize=None):
 
     pred, _ = _get_max_preds(output)
     gt, _ = _get_max_preds(target)
+    if return_gts_preds:
+        acc, avg_acc, cnt = keypoint_pck_accuracy(pred, gt, mask, thr, normalize)
+        return acc, avg_acc, cnt, gt, pred
     return keypoint_pck_accuracy(pred, gt, mask, thr, normalize)
 
 
@@ -296,10 +301,16 @@ def post_dark_udp(coords, batch_heatmaps, kernel=3):
             cv2.GaussianBlur(heatmap, (kernel, kernel), 0, heatmap)
     np.clip(batch_heatmaps, 0.001, 50, batch_heatmaps)
     np.log(batch_heatmaps, batch_heatmaps)
+    # [N, K, H, W] -> [H, W, N, K] -> [H, W, N*K]
     batch_heatmaps = np.transpose(batch_heatmaps,
                                   (2, 3, 0, 1)).reshape(H, W, -1)
-    batch_heatmaps_pad = cv2.copyMakeBorder(
-        batch_heatmaps, 1, 1, 1, 1, borderType=cv2.BORDER_REFLECT)
+    # due to the limits of cv2.copyMakeBorder(input[H, W, C]) C <= 512
+    batch_heatmaps_splits = [batch_heatmaps[..., 512*i:512*(i+1)] \
+        for i in range(math.ceil(N*K/512))]
+
+    batch_heatmaps_splits_pad = [cv2.copyMakeBorder(
+        split, 1, 1, 1, 1, borderType=cv2.BORDER_REFLECT) for split in batch_heatmaps_splits]
+    batch_heatmaps_pad = np.concatenate(batch_heatmaps_splits_pad, axis=2)
     batch_heatmaps_pad = np.transpose(
         batch_heatmaps_pad.reshape(H + 2, W + 2, B, K),
         (2, 3, 0, 1)).flatten()
@@ -461,6 +472,7 @@ def keypoints_from_heatmaps(heatmaps,
         heatmaps = _gaussian_blur(heatmaps, kernel=kernel)
 
     N, K, H, W = heatmaps.shape
+    # print(heatmaps.shape) [N, 51, 64, 48]
     if use_udp:
         assert target_type in ['GaussianHeatMap', 'CombinedTarget']
         if target_type == 'GaussianHeatMap':
@@ -468,7 +480,9 @@ def keypoints_from_heatmaps(heatmaps,
             preds = post_dark_udp(preds, heatmaps, kernel=kernel)
         elif target_type == 'CombinedTarget':
             for person_heatmaps in heatmaps:
+                # print(person_heatmaps.shape) [51, 64, 48]
                 for i, heatmap in enumerate(person_heatmaps):
+                    # print(heatmap.shape) [64, 48]
                     kt = 2 * kernel + 1 if i % 3 == 0 else kernel
                     cv2.GaussianBlur(heatmap, (kt, kt), 0, heatmap)
             # valid radius is in direct proportion to the height of heatmap.
@@ -477,8 +491,10 @@ def keypoints_from_heatmaps(heatmaps,
             offset_y = heatmaps[:, 2::3, :].flatten() * valid_radius
             heatmaps = heatmaps[:, ::3, :]
             preds, maxvals = _get_max_preds(heatmaps)
+            # print(preds.shape, maxvals.shape)[N, 17, 2] [N, 17, 1]
             index = preds[..., 0] + preds[..., 1] * W
-            index += W * H * np.arange(0, N * K / 3)
+            # print('index.shape:', index.shape) # [32, 17]
+            index += W * H * np.arange(0, N * K / 3).reshape(N, -1)
             index = index.astype(np.int).reshape(N, K // 3, 1)
             preds += np.concatenate((offset_x[index], offset_y[index]), axis=2)
     else:

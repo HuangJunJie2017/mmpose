@@ -6,9 +6,12 @@ from .top_down_eval import (keypoint_auc, keypoint_epe, keypoint_pck_accuracy,
                             keypoints_from_heatmaps, pose_pck_accuracy,
                             post_dark_udp)
 
+# custom
+from .top_down_eval import _get_max_preds, transform_preds
 __all__ = [
     'EvalHook', 'DistEvalHook', 'pose_pck_accuracy', 'keypoints_from_heatmaps',
     'keypoint_pck_accuracy', 'keypoint_auc', 'keypoint_epe', 'get_group_preds',
     'get_multi_stage_outputs', 'aggregate_results',
-    'compute_similarity_transform', 'post_dark_udp'
+    'compute_similarity_transform', 'post_dark_udp', 
+    '_get_max_preds', 'transform_preds'
 ]
